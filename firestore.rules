@@ -1,0 +1,174 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isStaff() {
+      return request.auth != null
+        && (
+          (exists(/databases/$(database)/documents/users/$(request.auth.uid))
+            && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['Farmer', 'Admin', 'farmer', 'admin'])
+          || (request.auth.token.email != null && request.auth.token.email.lower() == 'admin@gmail.com')
+        );
+    }
+
+    function isCustomerOfOrder() {
+      return request.auth != null && (
+        resource.data.customerId == request.auth.uid
+        || (resource.data.customerEmail != null
+            && request.auth.token.email != null
+            && resource.data.customerEmail.lower() == request.auth.token.email.lower())
+      );
+    }
+
+    function isFarmerOfOrder() {
+      return request.auth != null && (
+        resource.data.farmerId == request.auth.uid
+        || (resource.data.farmerEmail != null
+            && request.auth.token.email != null
+            && resource.data.farmerEmail.lower() == request.auth.token.email.lower())
+      );
+    }
+
+    function isReviewForCurrentUser(review) {
+      return request.auth != null
+        && (review.customerId == request.auth.uid
+            || (review.customerEmail != null
+                && request.auth.token.email != null
+                && review.customerEmail.lower() == request.auth.token.email.lower()))
+        && review.rating is int
+        && review.rating >= 1
+        && review.rating <= 5
+        && review.comment is string
+        && review.comment.size() <= 2000
+        && review.orderId is string
+        && review.productId is string;
+    }
+
+    // ── Users ──────────────────────────────────────────────────────────────────
+    match /users/{userId} {
+      allow read: if request.auth != null && (
+        request.auth.uid == userId
+        || isStaff()
+        || (request.auth.token.email != null
+            && resource.data.email != null
+            && resource.data.email.lower() == request.auth.token.email.lower())
+      );
+      allow write: if request.auth != null && (
+        request.auth.uid == userId || isStaff()
+      );
+      match /{allSubcollections=**} {
+        allow read, write: if request.auth != null;
+      }
+    }
+
+    // ── Orders ─────────────────────────────────────────────────────────────────
+    // Allows reads by customerId == auth.uid OR customerEmail == auth.email
+    match /orders/{orderId} {
+      allow read: if request.auth != null && (
+        isCustomerOfOrder() || isFarmerOfOrder() || isStaff()
+      );
+      allow create: if request.auth != null;
+      allow update: if request.auth != null && (
+        isCustomerOfOrder() || isFarmerOfOrder() || isStaff()
+      );
+      allow delete: if isStaff();
+    }
+
+    // ── Farmers & Products ─────────────────────────────────────────────────────
+    match /farmers/{farmerId} {
+      allow read: if true;
+      allow write: if request.auth != null && (
+        request.auth.uid == farmerId || isStaff()
+      );
+    }
+
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if request.auth != null && isStaff();
+    }
+
+    // ── Reviews ────────────────────────────────────────────────────────────────
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if request.auth != null && isReviewForCurrentUser(request.resource.data);
+      allow update: if request.auth != null && (
+        resource.data.customerId == request.auth.uid
+        || (resource.data.customerEmail != null
+            && request.auth.token.email != null
+            && resource.data.customerEmail.lower() == request.auth.token.email.lower())
+        || isStaff()
+      );
+      allow delete: if isStaff();
+    }
+
+    // ── Categories & Pickup Slots ──────────────────────────────────────────────
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if request.auth != null && isStaff();
+    }
+
+    match /pickup_slots/{slotId} {
+      allow read: if true;
+      allow write: if request.auth != null && isStaff();
+    }
+
+    // ── Conversations & Messages (Chat) ────────────────────────────────────────
+    match /conversations/{conversationId} {
+      allow read, write: if request.auth != null;
+
+      match /messages/{messageId} {
+        allow read, write: if request.auth != null;
+      }
+    }
+
+    // ── Followed Farmers ───────────────────────────────────────────────────────
+    match /followed_farmers/{followId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // ── Safety & Reports ───────────────────────────────────────────────────────
+    match /safety_profiles/{userId} {
+      allow read, write: if request.auth != null;
+    }
+
+    match /reports/{reportId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // ── Gamification ───────────────────────────────────────────────────────────
+    match /customer_gamification/{userId} {
+      allow read, write: if request.auth != null;
+      match /{sub=**} {
+        allow read, write: if request.auth != null;
+      }
+    }
+
+    match /farmer_gamification/{farmerId} {
+      allow read, write: if request.auth != null;
+      match /{sub=**} {
+        allow read, write: if request.auth != null;
+      }
+    }
+
+    // ── Notifications ──────────────────────────────────────────────────────────
+    match /notifications/{notificationId} {
+      allow read: if request.auth != null && (
+        resource.data.userId == request.auth.uid || isStaff()
+      );
+      allow write: if request.auth != null;
+    }
+
+    // ── Contact Messages & OTPs ────────────────────────────────────────────────
+    match /contact_messages/{messageId} {
+      allow read, write: if true;
+    }
+
+    match /email_otps/{email} {
+      allow read, write: if true;
+    }
+
+    match /mail/{id} {
+      allow read, write: if false;
+    }
+  }
+}
